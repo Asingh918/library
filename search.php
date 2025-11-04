@@ -1,30 +1,48 @@
 <?php
 require_once('connect.php');
 
-// Get and sanitize search query
+// Get and sanitize search query and category filter
 $search_query = trim($_GET['q'] ?? '');
+$category_filter = filter_var($_GET['category'] ?? 0, FILTER_VALIDATE_INT);
 $books = [];
 
 if (!empty($search_query)):
-    // Search in title, author name, description, and ISBN
-    $query = "SELECT b.*, a.name AS author_name, c.name AS category_name 
-              FROM books b
-              LEFT JOIN authors a ON b.author_id = a.id
-              LEFT JOIN categories c ON b.category_id = c.id
-              WHERE b.title LIKE :search 
-                 OR a.name LIKE :search 
-                 OR b.description LIKE :search 
-                 OR b.isbn LIKE :search
-              ORDER BY b.title ASC";
+    // Build query based on whether category filter is applied
+    if ($category_filter && $category_filter > 0):
+        $query = "SELECT b.*, a.name AS author_name, c.name AS category_name 
+                  FROM books b
+                  LEFT JOIN authors a ON b.author_id = a.id
+                  LEFT JOIN categories c ON b.category_id = c.id
+                  WHERE (b.title LIKE :search 
+                     OR a.name LIKE :search 
+                     OR b.description LIKE :search 
+                     OR b.isbn LIKE :search)
+                  AND b.category_id = :category_id
+                  ORDER BY b.title ASC";
+        $stmt = $db->prepare($query);
+        $search_param = '%' . $search_query . '%';
+        $stmt->bindValue(':search', $search_param);
+        $stmt->bindValue(':category_id', $category_filter, PDO::PARAM_INT);
+    else:
+        $query = "SELECT b.*, a.name AS author_name, c.name AS category_name 
+                  FROM books b
+                  LEFT JOIN authors a ON b.author_id = a.id
+                  LEFT JOIN categories c ON b.category_id = c.id
+                  WHERE b.title LIKE :search 
+                     OR a.name LIKE :search 
+                     OR b.description LIKE :search 
+                     OR b.isbn LIKE :search
+                  ORDER BY b.title ASC";
+        $stmt = $db->prepare($query);
+        $search_param = '%' . $search_query . '%';
+        $stmt->bindValue(':search', $search_param);
+    endif;
     
-    $stmt = $db->prepare($query);
-    $search_param = '%' . $search_query . '%';
-    $stmt->bindValue(':search', $search_param);
     $stmt->execute();
     $books = $stmt->fetchAll(PDO::FETCH_ASSOC);
 endif;
 
-// Fetch all categories for the sidebar
+// Fetch all categories for the sidebar and dropdown
 $stmt = $db->query("SELECT * FROM categories ORDER BY name");
 $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
@@ -43,7 +61,7 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
             margin-bottom: 3rem;
         }
         .search-box {
-            max-width: 600px;
+            max-width: 700px;
             margin: 0 auto;
         }
         .book-card {
@@ -63,10 +81,6 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
             background: #f8f9fa;
             padding: 1.5rem;
             border-radius: 0.5rem;
-        }
-        .highlight {
-            background-color: #fff3cd;
-            font-weight: bold;
         }
         footer {
             background: #343a40;
@@ -88,11 +102,27 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <h1 class="display-4">🔍 Search Books</h1>
             
             <div class="search-box mt-4">
-                <form method="GET" action="search.php" class="d-flex">
-                    <input type="text" class="form-control form-control-lg me-2" 
-                           name="q" placeholder="Search by title, author, ISBN..." 
-                           value="<?= htmlspecialchars($search_query) ?>" required>
-                    <button type="submit" class="btn btn-light btn-lg">Search</button>
+                <form method="GET" action="search.php">
+                    <div class="row g-2">
+                        <div class="col-md-7">
+                            <input type="text" class="form-control form-control-lg" 
+                                   name="q" placeholder="Search by title, author, ISBN..." 
+                                   value="<?= htmlspecialchars($search_query) ?>" required>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-lg" name="category">
+                                <option value="0">All Categories</option>
+                                <?php foreach ($categories as $cat): ?>
+                                    <option value="<?= $cat['id'] ?>" <?= $category_filter == $cat['id'] ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($cat['name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <button type="submit" class="btn btn-light btn-lg w-100">Search</button>
+                        </div>
+                    </div>
                 </form>
             </div>
         </div>
@@ -123,16 +153,29 @@ $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="alert alert-info">
                         <h4>Start Your Search</h4>
                         <p>Enter keywords to search for books by title, author, description, or ISBN.</p>
+                        <p><strong>Tip:</strong> Use the category dropdown to narrow your search results!</p>
                     </div>
                 <?php elseif (empty($books)): ?>
                     <div class="alert alert-warning">
                         <h4>No Results Found</h4>
-                        <p>No books matched your search for "<strong><?= htmlspecialchars($search_query) ?></strong>".</p>
-                        <p>Try different keywords or <a href="index.php">browse all books</a>.</p>
+                        <p>No books matched your search for "<strong><?= htmlspecialchars($search_query) ?></strong>"
+                        <?php if ($category_filter): ?>
+                            in category "<strong><?php 
+                                $filtered_cat = array_filter($categories, fn($c) => $c['id'] == $category_filter);
+                                echo htmlspecialchars(reset($filtered_cat)['name'] ?? '');
+                            ?></strong>"
+                        <?php endif; ?>.</p>
+                        <p>Try different keywords or <a href="search.php">search all categories</a>.</p>
                     </div>
                 <?php else: ?>
                     <div class="alert alert-success mb-4">
                         Found <strong><?= count($books) ?></strong> result(s) for "<strong><?= htmlspecialchars($search_query) ?></strong>"
+                        <?php if ($category_filter): ?>
+                            in <strong><?php 
+                                $filtered_cat = array_filter($categories, fn($c) => $c['id'] == $category_filter);
+                                echo htmlspecialchars(reset($filtered_cat)['name'] ?? '');
+                            ?></strong>
+                        <?php endif; ?>
                     </div>
 
                     <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
