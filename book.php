@@ -1,4 +1,5 @@
 <?php
+session_start();
 require_once('connect.php');
 
 // Validate and sanitize ID from GET
@@ -42,6 +43,19 @@ endif;
         .info-label {
             font-weight: bold;
             color: #667eea;
+        }
+        .comment-card {
+            border-left: 3px solid #667eea;
+            background: #f8f9fa;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: 0.25rem;
+        }
+        .comment-form-section {
+            background: #fff;
+            border: 2px solid #667eea;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
         }
         footer {
             background: #343a40;
@@ -150,7 +164,7 @@ endif;
                         <?php if ($book['description']): ?>
                         <hr class="my-4">
                         <h4>Description</h4>
-                        <p class="lead"><?= nl2br(htmlspecialchars($book['description'])) ?></p>
+                        <div class="lead"><?= $book['description'] ?></div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -163,6 +177,135 @@ endif;
                     </div>
                 </div>
                 <?php endif; ?>
+
+                <!-- Comments Section -->
+                <div class="card book-details-card mb-4">
+                    <div class="card-body">
+                        <h4 class="mb-4">📖 Reader Reviews & Comments</h4>
+                        
+                        <?php
+                        // Fetch approved comments for this book
+                        try {
+                            $query = "SELECT r.*, u.username 
+                                      FROM reviews r
+                                      LEFT JOIN users u ON r.user_id = u.id
+                                      WHERE r.book_id = :book_id AND r.status = 'approved'
+                                      ORDER BY r.created_at DESC";
+                            $stmt = $db->prepare($query);
+                            $stmt->bindValue(':book_id', $id, PDO::PARAM_INT);
+                            $stmt->execute();
+                            $comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                        } catch (PDOException $e) {
+                            $comments = [];
+                        }
+                        ?>
+
+                        <!-- Display Existing Comments -->
+                        <?php if (empty($comments)): ?>
+                            <div class="alert alert-info">
+                                <strong>No reviews yet!</strong> Be the first to share your thoughts about this book.
+                            </div>
+                        <?php else: ?>
+                            <div class="mb-4">
+                                <h5 class="mb-3">Reviews (<?= count($comments) ?>)</h5>
+                                <?php foreach ($comments as $comment): ?>
+                                    <div class="comment-card">
+                                        <div class="d-flex justify-content-between align-items-start mb-2">
+                                            <div>
+                                                <strong><?= htmlspecialchars($comment['username'] ?? 'Anonymous') ?></strong>
+                                                <?php if ($comment['rating']): ?>
+                                                    <span class="text-warning ms-2">
+                                                        <?= str_repeat('★', $comment['rating']) ?>
+                                                        <?= str_repeat('☆', 5 - $comment['rating']) ?>
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
+                                            <small class="text-muted"><?= date('M j, Y', strtotime($comment['created_at'])) ?></small>
+                                        </div>
+                                        <p class="mb-0"><?= nl2br(htmlspecialchars($comment['comment'])) ?></p>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <hr class="my-4">
+                        
+                        <!-- Comment Form - ALWAYS VISIBLE -->
+                        <div class="comment-form-section">
+                            <h5 class="mb-3">✍️ Leave Your Review</h5>
+                            
+                            <?php if (isset($_SESSION['user_id'])): ?>
+                                <div class="alert alert-success mb-3">
+                                    <small>Posting as: <strong><?= htmlspecialchars($_SESSION['username']) ?></strong></small>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <form method="POST" action="submit_comment.php" id="commentForm">
+                                <input type="hidden" name="book_id" value="<?= $id ?>">
+                                
+                                <?php if (!isset($_SESSION['user_id'])): ?>
+                                <div class="mb-3">
+                                    <label for="username" class="form-label">Your Name *</label>
+                                    <input type="text" class="form-control" id="username" name="username" 
+                                           placeholder="Enter your name" required>
+                                    <div class="form-text">
+                                        💡 <a href="login.php">Login</a> or <a href="register.php">Register</a> for a faster experience!
+                                    </div>
+                                </div>
+                                <?php else: ?>
+                                <input type="hidden" name="username" value="<?= htmlspecialchars($_SESSION['username']) ?>">
+                                <?php endif; ?>
+
+                                <div class="mb-3">
+                                    <label for="rating" class="form-label">Your Rating *</label>
+                                    <select class="form-select form-select-lg" id="rating" name="rating" required>
+                                        <option value="">-- How would you rate this book? --</option>
+                                        <option value="5">⭐⭐⭐⭐⭐ Excellent (5 stars)</option>
+                                        <option value="4">⭐⭐⭐⭐☆ Very Good (4 stars)</option>
+                                        <option value="3">⭐⭐⭐☆☆ Good (3 stars)</option>
+                                        <option value="2">⭐⭐☆☆☆ Fair (2 stars)</option>
+                                        <option value="1">⭐☆☆☆☆ Poor (1 star)</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="comment" class="form-label">Your Review *</label>
+                                    <textarea class="form-control" id="comment" name="comment" rows="5" 
+                                              placeholder="Share your thoughts about this book... What did you like? Would you recommend it?" 
+                                              required></textarea>
+                                    <div class="form-text">
+                                        Minimum 10 characters. Your review will be moderated before appearing on the page.
+                                    </div>
+                                </div>
+
+                                <!-- CAPTCHA Verification -->
+                                <div class="mb-3">
+                                    <label for="captcha" class="form-label">Security Check *</label>
+                                    <div class="card mb-2" style="width: fit-content;">
+                                        <img src="captcha.php?<?= time() ?>" alt="CAPTCHA" id="captcha-image" 
+                                             class="card-img-top" style="border: 2px solid #dee2e6;">
+                                        <div class="card-body p-2">
+                                            <button type="button" class="btn btn-sm btn-secondary w-100" onclick="refreshCaptcha()">
+                                                🔄 Refresh Code
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <input type="text" class="form-control" id="captcha" name="captcha" 
+                                           placeholder="Enter the code shown above" required autocomplete="off">
+                                    <div class="form-text">
+                                        Please enter the characters you see in the image above to verify you're human.
+                                    </div>
+                                </div>
+
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-primary btn-lg">
+                                        📝 Submit Review
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="col-md-4">
@@ -203,6 +346,13 @@ endif;
         </div>
     </footer>
 
+    <script>
+        // Function to refresh CAPTCHA image
+        function refreshCaptcha() {
+            const captchaImg = document.getElementById('captcha-image');
+            captchaImg.src = 'captcha.php?' + new Date().getTime();
+        }
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
